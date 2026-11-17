@@ -19,8 +19,15 @@ class PlanInput(BaseModel):
     campus:str=Field(default='全部',max_length=50)
     exclude_absent:bool=True
     description:str=Field(default='',max_length=2000)
+    target_control:int=Field(default=0,ge=0,le=10000)
+    target_intervention:int=Field(default=0,ge=0,le=10000)
 class RunInput(BaseModel):
     plan_id:int=Field(gt=0)
+    source:Literal['campus','roster']|None=None
 class ConclusionInput(BaseModel):
     conclusion:str=Field(min_length=4,max_length=3000)
     published:bool=False
+class RecruitmentInput(BaseModel):
+    kind:Literal['initial','supplementary']='initial'
+    idempotency_key:str=Field(min_length=8,max_length=80)
+    plan_ids:list[int]|None=None

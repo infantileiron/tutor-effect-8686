@@ -1,11 +1,7 @@
 import math,hashlib,json
 from scipy import stats
 
-def welch(students,plan):
-    selected=[s for s in students if plan.campus=='全部' or s.campus==plan.campus]
-    kept=[s for s in selected if s.score is not None and (not plan.exclude_absent or not s.absent)]
-    control=[s.score for s in kept if s.group=='control']
-    treatment=[s.score for s in kept if s.group=='intervention']
+def _welch_stats(control,treatment):
     n0,n1=len(control),len(treatment)
     if min(n0,n1)<2: raise ValueError('每组至少需要 2 个有效成绩；请调整教学点或补录样本')
     m0,m1=sum(control)/n0,sum(treatment)/n1
@@ -18,5 +14,22 @@ def welch(students,plan):
     p=float(2*stats.t.sf(abs(t),df))
     margin=float(stats.t.ppf(.975,df))*se
     pooled=math.sqrt(((n0-1)*v0+(n1-1)*v1)/(n0+n1-2))
+    return {'control_n':n0,'intervention_n':n1,'control_mean':m0,'intervention_mean':m1,'difference':delta,'t':t,'df':df,'p_value':p,'ci_low':delta-margin,'ci_high':delta+margin,'cohen_d':delta/pooled if pooled else None,'significant':p<.05}
+
+def welch(students,plan):
+    selected=[s for s in students if plan.campus=='全部' or s.campus==plan.campus]
+    kept=[s for s in selected if s.score is not None and (not plan.exclude_absent or not s.absent)]
+    control=[s.score for s in kept if s.group=='control']
+    treatment=[s.score for s in kept if s.group=='intervention']
+    result=_welch_stats(control,treatment)
     digest=hashlib.sha256(json.dumps([(s.code,s.score,s.group,s.absent) for s in kept],ensure_ascii=False).encode()).hexdigest()
-    return {'control_n':n0,'intervention_n':n1,'excluded':len(selected)-len(kept),'total_selected':len(selected),'control_mean':m0,'intervention_mean':m1,'difference':delta,'t':t,'df':df,'p_value':p,'ci_low':delta-margin,'ci_high':delta+margin,'cohen_d':delta/pooled if pooled else None,'significant':p<.05,'checksum':digest,'sample_snapshot':[{'code':s.code,'group':s.group,'score':s.score,'campus':s.campus} for s in kept],'method':'Welch 独立样本 t 检验；双侧 α=0.05；干预组减对照组；95% CI'}
+    return {**result,'excluded':len(selected)-len(kept),'total_selected':len(selected),'checksum':digest,'sample_snapshot':[{'code':s.code,'group':s.group,'score':s.score,'campus':s.campus} for s in kept],'method':'Welch 独立样本 t 检验；双侧 α=0.05；干预组减对照组；95% CI','source':'campus'}
+
+def roster_welch(plan,rows):
+    """按方案已锁定名单聚合样本计算组间差异。rows 为 (assignment, student) 序列，仅含 locked 名额。"""
+    kept=[(a,s) for a,s in rows if s.score is not None and (not plan.exclude_absent or not s.absent)]
+    control=[s.score for a,s in kept if a.group=='control']
+    treatment=[s.score for a,s in kept if a.group=='intervention']
+    result=_welch_stats(control,treatment)
+    digest=hashlib.sha256(json.dumps([(s.code,s.score,a.group,s.absent) for a,s in kept],ensure_ascii=False).encode()).hexdigest()
+    return {**result,'excluded':len(rows)-len(kept),'total_selected':len(rows),'checksum':digest,'sample_snapshot':[{'code':s.code,'group':a.group,'score':s.score,'campus':s.campus} for a,s in kept],'method':'Welch 独立样本 t 检验；双侧 α=0.05；干预组减对照组；95% CI；样本来自已锁定名单','source':'roster'}

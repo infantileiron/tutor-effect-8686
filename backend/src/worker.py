@@ -2,9 +2,8 @@ import time,traceback
 from pathlib import Path
 from sqlalchemy import select
 from src.config.database import SessionLocal
-from src.models.entities import Report,Plan,Student
-from src.services.reports import queue
-from src.services.statistics import welch
+from src.models.entities import Report
+from src.services.reports import queue,compute_report
 print('tutor effect worker started',flush=True)
 while True:
     Path('/tmp/worker-heartbeat').touch()
@@ -15,8 +14,7 @@ while True:
             if not task: continue
             task.status='running';db.commit()
             try:
-                plan=db.get(Plan,task.plan_id)
-                task.result=welch(db.scalars(select(Student).order_by(Student.code)).all(),plan)
+                task.result=compute_report(db,task)
                 task.status='completed'
             except Exception as e:
                 task.error=str(e);task.status='failed'

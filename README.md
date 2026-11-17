@@ -5,7 +5,12 @@
 ## 业务场景
 知行职教有城东、城西、滨江、高新 4 个教学点。原流程由教学点导出成绩表，分析员复制进工作簿计算，再将截图发给负责人。三类痛点是：排除缺考时容易丢失口径、方案与结果脱节、签核结论没有当时的样本证据。上游是教学点期末成绩；本应用替代手工核对与计算；下游由教研负责人决定是否扩大辅导试点。
 
-四个业务模块：**成绩样本**支持筛选、录入和修订；**辅导分组**登记研究范围和排除规则；**检验工作台**提交后台任务并查看失败原因与历史结果；**教研结论**起草解释、负责人签核并下载包括原始样本快照的 JSON 报告。业务数据均在 PostgreSQL 中持久化，统计由 Python worker 计算。
+四个业务模块：**成绩样本**支持筛选、录入和修订；**辅导分组**登记研究范围、排除规则和两组目标人数；**联合招募**在多研究争用学员时按各方案教学点与目标人数联合分配名额；**检验工作台**提交后台任务并查看失败原因与历史结果；**教研结论**起草解释、负责人签核并下载包括原始样本快照的 JSON 报告。业务数据均在 PostgreSQL 中持久化，统计由 Python worker 计算。
+
+## 联合招募
+多个辅导研究共享候选学员时，先到先占会让部分研究缺组。联合招募把各方案教学点与两组目标人数放在一起分配：每人同期只占一个名额（待分配或已锁定均占用）；分配目标按字典序——先最大化各方案最低达成比例（本轮分配/剩余目标），再最大化总人数；结果列明缺额原因（教学点合格候选不足 / 共享候选被其他研究占用 / 组内缺口）。算法为最大流建模：比例用分数精确二分并做下界可行性检查，再固定下界增广求总人数最大。
+
+名额生命周期为待分配 → 已锁定：招募生成待分配批次，核对后锁定生效；设置目标人数的方案，其检验只读已锁定名单，按名额分组聚合样本计算组间差异（Welch）。退出释放名额供补招，退出者不会被同一方案补招回；补招和退出不改变已受理报告的样本快照，成绩仍可逐条修订（新检验采用修订后成绩）。并发安全：部分唯一索引保证一人一名额，创建冲突整体回滚重试，锁定按批次串行且失败回滚保持待分配；同一幂等键重试返回原批次不重复占位，重复锁定幂等。前端「联合招募」页可发起招募/补招、锁定批次、退出名额，并查看各研究名单、占用和检验依据。
 
 ## 启动
 ```sh
@@ -40,7 +45,7 @@ JWT 有效期 8 小时；角色由服务器读取数据库，不信任客户端�
 
 以干预组减对照组定义 Δ。Welch t = Δ / sqrt(s1²/n1+s0²/n0)，自由度使用 Welch-Satterthwaite 公式；双侧 p 值和 95% 区间通过 SciPy t 分布计算。Cohen d 使用两组自由度加权 pooled 标准差，描述效应大小，与 Welch 方差假设相互独立。显著性 α 固定为 0.05。观察性分组不能直接做因果断言。
 
-seed 使用 Random(20261115)：160 名学员，4 教学点、各 80 人两组、7 条缺考记录；初始方案为 `2026秋季 · 晚间小组辅导`，初始报告为便于演示的真实计算结果。seed 以 email/code/title 自然键查重，已存在对象不更新，重跑不覆盖用户修改。报告保存计算样本快照与校验码；后续成绩修订不会改旧报告。
+seed 使用 Random(20261115)：160 名学员，4 教学点、各 80 人两组、7 条缺考记录；初始方案为 `2026秋季 · 晚间小组辅导`（全部教学点，目标 25/25）与 `2026秋季 · 城东强化辅导`（城东，目标 8/8），初始报告为便于演示的真实计算结果。seed 以 email/code/title 自然键查重，已存在对象不更新，重跑不覆盖用户修改。报告保存计算样本快照与校验码；后续成绩修订不会改旧报告。
 
 ## 技术与结构
 |层|技术|
@@ -51,9 +56,9 @@ seed 使用 Random(20261115)：160 名学员，4 教学点、各 80 人两组、
 |数据与队列|PostgreSQL 16、Redis 7，独立 Python worker|
 |认证|PyJWT 2.10.1、PBKDF2|
 
-`frontend/src/api` 负责请求，`stores` 管业务状态，`pages` 分四页，`components/common` 复用结果、表格、状态和通知，`hooks` 封装表单/轮询，`utils` 做转义/下载。`backend/src/models` 定义表，`schemas` 验证，`services` 处理业务与算法，`routes` 提供接口，`controllers` 序列化，`middlewares` 处理审计和全局错误。`backend/migrations/001_initial.sql` 是初始结构；启动使用 metadata.create_all，后续字段迁移需人工管理。
+`frontend/src/api` 负责请求，`stores` 管业务状态，`pages` 分五页，`components/common` 复用结果、表格、状态和通知，`hooks` 封装表单/轮询，`utils` 做转义/下载。`backend/src/models` 定义表，`schemas` 验证，`services` 处理业务与算法（`allocation.py` 为联合分配，`recruitment.py` 为名额生命周期），`routes` 提供接口，`controllers` 序列化，`middlewares` 处理审计和全局错误。`backend/migrations/001_initial.sql` 是初始结构、`002_recruitment.sql` 记录联合招募字段与新表；启动使用 metadata.create_all，后续字段迁移需人工管理。
 
-共享枚举位置：角色 ROLES、分组 GROUPS、报告状态 REPORT_STATUSES 在 `backend/src/constants/enums.py`；前端对应 `frontend/src/constants/enums.js` 的 ROLES、GROUPS、STATUS。API输入的 group 枚举同时在 `backend/src/schemas/business.py` 校验。
+共享枚举位置：角色 ROLES、分组 GROUPS、报告状态 REPORT_STATUSES、名额与批次状态、招募类型、报告口径 REPORT_SOURCES 在 `backend/src/constants/enums.py`；前端对应 `frontend/src/constants/enums.js` 的 ROLES、GROUPS、STATUS、RECRUIT_KIND、SOURCE。API输入的 group 枚举同时在 `backend/src/schemas/business.py` 校验。
 
 ## Docker 与环境变量
 恰好五服务：frontend/backend/worker/db/redis，各有健康检查。backend 和 worker 依赖健康 DB/Redis，frontend 依赖 backend；worker 依赖 backend 初始化完成。数据库、Redis AOF、报告产物预留共享卷分别命名。worker 真正从 Redis 唤醒并处理数据库待执行任务，每 2 秒更新心跳。Redis 任务通知丢失仍会扫描数据库待执行任务。计算结果权威存于数据库，shared reports 卷供未来文件归档；当前 JSON 按快照直接导出。
@@ -61,7 +66,7 @@ seed 使用 Random(20261115)：160 名学员，4 教学点、各 80 人两组、
 `.env.example` 列出 COMPOSE_PROJECT_NAME、FRONTEND_PORT、BACKEND_PORT、DB_PORT、POSTGRES_PASSWORD、JWT_SECRET、SEED_DEMO、NETWORK_SUBNET（默认 10.253.103.0/24）。所有变量均可覆盖；默认是本地演示配置，外部部署前需更换密码和 JWT_SECRET。`.env` 已忽略。每次最多允许 10 个待执行任务，HTTP 429 提示等待。
 
 ## 本地开发
-后端在 Python3.11 虚拟环境运行 `pip install -r backend/requirements.txt`，设置 DATABASE_URL、REDIS_URL、JWT_SECRET，进入 backend 后运行 `uvicorn src.main:app --reload` 和另一个终端 `python -m src.worker`。前端无打包步骤，可直接由 Nginx 提供静态文件并代理 /api/。
+后端在 Python3.11 虚拟环境运行 `pip install -r backend/requirements.txt`，设置 DATABASE_URL、REDIS_URL、JWT_SECRET，进入 backend 后运行 `uvicorn src.main:app --reload` 和另一个终端 `python -m src.worker`。前端无打包步骤，可直接由 Nginx 提供静态文件并代理 /api/。测试：`python -m pytest tests`（SQLite 运行，覆盖共享候选不足、并发争抢不超占、幂等重试、退出时检验受理与快照不变）。
 
 ## 已知范围
 不含 CSV 批量导入、随机分组器或多重比较校正；成绩可逐条录入/修订。教学点为自由文本，前端方案选项来自现有成绩。初始报告为同步真实计算的演示快照，新提交报告全部走异步 worker。外网字体不可用时使用本地 serif 回退。进程中断在 running 状态的任务需管理员在数据库重置为 queued；当前小型版本未提供任务取消/自动回收。审计列表只给管理员，最多最近 100 条。

@@ -23,7 +23,10 @@ def seed():
         title='2026秋季 · 晚间小组辅导'
         plan=db.scalar(select(Plan).where(Plan.title==title))
         if not plan:
-            plan=Plan(title=title,campus='全部',exclude_absent=True,description='评估每周两次小组辅导与常规自习的期末成绩差异。缺考学员排除；观察性结果不直接证明因果。');db.add(plan);db.flush()
+            plan=Plan(title=title,campus='全部',exclude_absent=True,target_control=25,target_intervention=25,description='评估每周两次小组辅导与常规自习的期末成绩差异。缺考学员排除；观察性结果不直接证明因果。');db.add(plan);db.flush()
+        title2='2026秋季 · 城东强化辅导'
+        if not db.scalar(select(Plan).where(Plan.title==title2)):
+            db.add(Plan(title=title2,campus='城东',exclude_absent=True,target_control=8,target_intervention=8,description='城东教学点晚间强化班，与常规自习比较期末成绩。与主方案联合招募，共享城东候选。'));db.flush()
         db.commit()
         if not db.scalar(select(Report).where(Report.plan_id==plan.id)):
             result=welch(db.scalars(select(Student).order_by(Student.code)).all(),plan)

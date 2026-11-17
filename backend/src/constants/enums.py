@@ -1,3 +1,7 @@
 ROLES=('admin','analyst','viewer')
 REPORT_STATUSES=('queued','running','completed','failed')
 GROUPS=('control','intervention')
+ASSIGNMENT_STATUSES=('pending','locked','withdrawn')
+BATCH_STATUSES=('pending','locked')
+RECRUIT_KINDS=('initial','supplementary')
+REPORT_SOURCES=('campus','roster')
